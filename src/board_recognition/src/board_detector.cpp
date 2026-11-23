@@ -206,6 +206,38 @@ Detection BoardDetector::detect(const cv::Mat &bgr, const cv::Mat &camera,
   return result;
 }
 
+std::vector<cv::Point2f> BoardDetector::project_marker(int id, const Pose &pose,
+  const cv::Mat &camera, const cv::Mat &distortion, cv::Size size) const
+{
+  const auto marker = std::find(board_->ids.begin(), board_->ids.end(), id);
+  if (marker == board_->ids.end()) {
+    return {};
+  }
+
+  cv::Matx33d rotation;
+  cv::Rodrigues(pose.rotation, rotation);
+  std::vector<cv::Point3f> points;
+  for (const auto &corner : board_->objPoints[marker - board_->ids.begin()]) {
+    const double x = corner.x - center_[0];
+    const double y = corner.y - center_[1];
+    if (rotation(2, 0) * x + rotation(2, 1) * y + pose.translation[2] <= 0) {
+      return {};
+    }
+    points.emplace_back(x, y, 0.0);
+  }
+
+  std::vector<cv::Point2f> pixels;
+  cv::projectPoints(points, pose.rotation, pose.translation, camera, distortion, pixels);
+  for (const auto &p : pixels) {
+    if (!std::isfinite(p.x) || !std::isfinite(p.y) ||
+      p.x < 0 || p.x >= size.width || p.y < 0 || p.y >= size.height)
+    {
+      return {};
+    }
+  }
+  return pixels;
+}
+
 void BoardDetector::draw_axes(cv::Mat &image, const Pose &pose, const cv::Mat &camera,
   const cv::Mat &distortion) const
 {

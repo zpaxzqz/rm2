@@ -11,6 +11,8 @@
 
 素材中的实物板从正面看，最上行 ID 0、1、2 分别在从左数第 2、4、6 格，第二行从第 1 格开始交错。通过 `legacy_pattern: 0` 适配这块板。若换成 OpenCV 4.5.4 默认棋盘，在板配置中设为 `1`。
 
+短暂漏检时，若本帧仍解出有效板位姿，曾在最近 120 ms 内识别且完整位于画面的标记会按本帧位姿补画绿色边框，并以 ~ID 标出。tag_ids 始终只包含本帧实际读出的 ID。
+
 ## 坐标系
 
 原点位于板中心。以 ID 0–2 在上方、标记正面朝向观察者为准，红色 +X 沿板面向右，绿色 +Y 沿板面向上，蓝色 +Z 垂直板面朝向观察者。板坐标系为右手系。
@@ -32,7 +34,7 @@ source install/setup.bash
 
 ```bash
 ros2 launch board_recognition recognition.launch.py source:=video \
-  video_path:="/mnt/d/big homework/test_media/Video_20261122192405053.avi" \
+  video_path:="/mnt/d/bighomework/test_media/Video_20261122192405053.avi" \
   loop:=false
 ```
 

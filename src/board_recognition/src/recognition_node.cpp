@@ -6,6 +6,7 @@
 #include <cstdlib>
 #include <functional>
 #include <iomanip>
+#include <map>
 #include <memory>
 #include <sstream>
 #include <stdexcept>
@@ -29,6 +30,7 @@ namespace
 {
 constexpr char optical_frame[] = "camera_frame";
 constexpr char window_name[] = "ChArUco recognition";
+constexpr auto marker_hold = std::chrono::milliseconds(120);
 using SteadyClock = std::chrono::steady_clock;
 using Observation = interfaces::msg::BoardObservation;
 
@@ -106,6 +108,7 @@ public:
       std::bind(&RecognitionNode::on_image, this, std::placeholders::_1));
     timer_ = create_wall_timer(std::chrono::milliseconds(100), [this]() {
       if (SteadyClock::now() - last_input_ >= input_timeout_) {
+        marker_seen_.clear();
         Observation observation;
         observation.header.stamp = now();
         observation.header.frame_id = optical_frame;
@@ -153,6 +156,42 @@ private:
     std::copy(info.k.begin(), info.k.end(), camera.ptr<double>());
   }
 
+  void draw_markers(cv::Mat &image, const Detection &result, const cv::Mat &camera,
+    const cv::Mat &distortion)
+  {
+    if (result.ids.empty()) {
+      marker_seen_.clear();
+      return;
+    }
+    cv::aruco::drawDetectedMarkers(image, result.borders, result.ids);
+    for (auto it = marker_seen_.begin(); it != marker_seen_.end();) {
+      if (last_input_ - it->second > marker_hold) {
+        it = marker_seen_.erase(it);
+      } else {
+        ++it;
+      }
+    }
+    for (const auto id : result.ids) {
+      marker_seen_[id] = last_input_;
+    }
+    if (!result.pose) {
+      return;
+    }
+
+    // Bridge brief detection gaps for display only, using this frame's pose.
+    for (const auto &[id, seen] : marker_seen_) {
+      if (seen == last_input_) {
+        continue;
+      }
+      const auto border = detector_.project_marker(id, *result.pose, camera, distortion, image.size());
+      if (!border.empty()) {
+        cv::aruco::drawDetectedMarkers(image, std::vector<std::vector<cv::Point2f>>{border});
+        cv::putText(image, "~" + std::to_string(id), border[0], cv::FONT_HERSHEY_SIMPLEX,
+          0.45, {0, 190, 0}, 1, cv::LINE_AA);
+      }
+    }
+  }
+
   void on_image(sensor_msgs::msg::Image::ConstSharedPtr image)
   {
     last_input_ = SteadyClock::now();
@@ -171,9 +210,7 @@ private:
 
       const auto result = detector_.detect(debug, camera, distortion);
       observation.tag_ids.assign(result.ids.begin(), result.ids.end());
-      if (!result.ids.empty()) {
-        cv::aruco::drawDetectedMarkers(debug, result.borders, result.ids);
-      }
+      draw_markers(debug, result, camera, distortion);
       if (result.pose) {
         detector_.draw_axes(debug, *result.pose, camera, distortion);
         geometry_msgs::msg::PoseStamped pose;
@@ -231,6 +268,7 @@ private:
   BoardDetector detector_;
   bool show_window_ = false;
   cv::Mat last_debug_;
+  std::map<int, SteadyClock::time_point> marker_seen_;
   std::optional<geometry_msgs::msg::PoseStamped> last_pose_;
   std::chrono::duration<double> input_timeout_;
   SteadyClock::time_point last_input_ = SteadyClock::now();

@@ -29,6 +29,9 @@ public:
   void draw_axes(cv::Mat &image, const Pose &pose, const cv::Mat &camera,
     const cv::Mat &distortion) const;
 
+  std::vector<cv::Point2f> project_marker(int id, const Pose &pose, const cv::Mat &camera,
+    const cv::Mat &distortion, cv::Size size) const;
+
 private:
   cv::Ptr<cv::aruco::CharucoBoard> board_;
   cv::Ptr<cv::aruco::DetectorParameters> parameters_;
