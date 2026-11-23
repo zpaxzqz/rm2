@@ -11,6 +11,47 @@
 
 namespace board_recognition
 {
+namespace
+{
+// On even-height boards the two OpenCV patterns stagger opposite rows.
+void use_modern_pattern(cv::aruco::CharucoBoard &board, int height, float square)
+{
+  if (height % 2 != 0) {
+    return;
+  }
+
+  for (auto &marker : board.objPoints) {
+    const float center_y = (marker[0].y + marker[2].y) / 2.0F;
+    const int row_from_top = height - 1 - static_cast<int>(center_y / square);
+    const int direction = row_from_top % 2 == 0 ? 1 : -1;
+    for (auto &corner : marker) {
+      corner.x += direction * square;
+    }
+  }
+  for (size_t i = 0; i < board.chessboardCorners.size(); ++i) {
+    auto &indices = board.nearestMarkerIdx[i];
+    auto &corners = board.nearestMarkerCorners[i];
+    indices.clear();
+    corners.clear();
+    const auto &corner = board.chessboardCorners[i];
+    for (size_t j = 0; j < board.objPoints.size(); ++j) {
+      const auto &marker = board.objPoints[j];
+      const auto center = (marker[0] + marker[2]) * 0.5F;
+      if (std::abs(center.x - corner.x) < square * 0.75F &&
+        std::abs(center.y - corner.y) < square * 0.75F)
+      {
+        const auto nearest = std::min_element(marker.begin(), marker.end(),
+          [&corner](const auto &a, const auto &b) {
+            return cv::norm(a - corner) < cv::norm(b - corner);
+          });
+        indices.push_back(static_cast<int>(j));
+        corners.push_back(static_cast<int>(nearest - marker.begin()));
+      }
+    }
+  }
+}
+}  // namespace
+
 BoardDetector::BoardDetector(const std::string &config_path)
 {
   cv::FileStorage config(config_path, cv::FileStorage::READ);
@@ -37,6 +78,19 @@ BoardDetector::BoardDetector(const std::string &config_path)
 
   board_ = cv::aruco::CharucoBoard::create(width, height, square, marker,
     cv::aruco::getPredefinedDictionary(cv::aruco::DICT_4X4_50));
+  int legacy_pattern = 1;
+  if (!config["legacy_pattern"].empty()) {
+    config["legacy_pattern"] >> legacy_pattern;
+  }
+  if (legacy_pattern != 0 && legacy_pattern != 1) {
+    throw std::runtime_error("legacy_pattern must be 0 or 1");
+  }
+  if (!legacy_pattern) {
+    if (width % 2 != 0 && height % 2 == 0) {
+      throw std::runtime_error("Modern pattern with even height requires even width");
+    }
+    use_modern_pattern(*board_, height, square);
+  }
   std::vector<int> ids;
   config["marker_ids"] >> ids;
   if (!ids.empty()) {
@@ -82,18 +136,33 @@ Detection BoardDetector::detect(const cv::Mat &bgr, const cv::Mat &camera,
   std::vector<int> corner_ids;
   cv::aruco::interpolateCornersCharuco(board_borders, board_ids, gray, board_, pixels,
     corner_ids, camera, distortion);
-  if (corner_ids.size() < 4) {
-    return result;
-  }
-
   std::vector<cv::Point3f> points;
   std::vector<cv::Point2f> plane;
-  for (const int id : corner_ids) {
-    const cv::Point3f corner = board_->chessboardCorners.at(id);
+  const auto add_point = [&](const cv::Point3f &corner) {
     const float x = static_cast<float>(corner.x - center_[0]);
     const float y = static_cast<float>(corner.y - center_[1]);
     points.emplace_back(x, y, 0.0F);
     plane.emplace_back(x, y);
+  };
+  if (corner_ids.size() >= 4) {
+    for (const int id : corner_ids) {
+      add_point(board_->chessboardCorners.at(id));
+    }
+  }
+  if (points.size() < 4) {
+    if (board_ids.size() < 2) {
+      return result;
+    }
+    points.clear();
+    plane.clear();
+    pixels.clear();
+    for (size_t i = 0; i < board_ids.size(); ++i) {
+      const auto marker = std::find(board_->ids.begin(), board_->ids.end(), board_ids[i]);
+      for (const auto &corner : board_->objPoints[marker - board_->ids.begin()]) {
+        add_point(corner);
+      }
+      pixels.insert(pixels.end(), board_borders[i].begin(), board_borders[i].end());
+    }
   }
   std::vector<cv::Point2f> hull;
   cv::convexHull(plane, hull);

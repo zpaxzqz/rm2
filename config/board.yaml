@@ -7,3 +7,5 @@ square_length_m: 0.15
 marker_length_m: 0.12
 # 空数组采用 OpenCV 4.5.4 的默认连续 ID；自定义数组须按 board.objPoints 顺序填写。
 marker_ids: []
+# 0: supplied physical board; 1: OpenCV 4.5.4 legacy layout.
+legacy_pattern: 0
