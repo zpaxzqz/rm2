@@ -1,63 +1,73 @@
-# 视觉组校内赛 · ChArUco 板识别与位姿解算
+# ChArUco 板识别与位姿解算
 
-截止时间待定，以群通知为准。
+视觉组校内赛作业。识别节点使用 C++、ROS 2 Humble 和 OpenCV 4.5.4。离线回放与现场相机使用同一个识别节点，均可在 Foxglove 查看调试图和板中心位姿。
 
-## 任务
+## 实现
 
-在 WSL 中使用 ROS2 Humble、C++、OpenCV 和 CMake 编写识别节点。订阅相机图像和内参，识别 ChArUco 板，计算板中心相对于相机的位置和朝向。平时用视频调试，现场用海康相机验收。检测和解算方法自行选择。
+1. 对输入图像检测 `DICT_4X4_50` 标记，在调试图上绘制边框和 ID。位姿估计只使用 `config/board.yaml` 中配置的板内 ID。实物板为 6 × 6 格，方格边长 0.15 m，标记边长 0.12 m，ID 为 0–17。
+2. 节点使用最近收到的兼容 `CameraInfo` 内参和畸变系数。至少取得四个 ChArUco 内角点时优先使用内角点。内角点不足时，至少需要两个板内标记，再使用其四角作为观测。无可用标定时仍检测 ID 并输出调试图。
+3. 将平面三维点移到以板中心为原点的坐标系。用 IPPE 求平面 PnP 候选，用 LM 对候选细化，并选取重投影误差最小且深度为正的解。拒绝退化点集和 RMS 重投影误差超过 3 px 的解。
+4. 有效位姿沿用图像时间戳，旋转发布为单位四元数。解算失败时，识别状态记录最近一次成功位姿及其原始时间戳。调试图显示 `STALE`、位姿年龄和上次有效 XYZ。图像超过 0.5 s 未到达时，状态额外报告 `input_stale=true`。
 
-- 在调试图上标出标记 ID 和边框，用红、绿、蓝箭头表示板子的 X、Y、Z 轴，显示板中心的 XYZ，单位为米。
-- 位姿以板中心为原点，相对于相机光学坐标系 `camera_frame`（X 向右、Y 向下、Z 向前）。
-- 建议在板子离开画面或解算失败时保留上一次有效位姿，显示 `STALE` 和经过的秒数。
+素材中的实物板从正面看，最上行 ID 0、1、2 分别在从左数第 2、4、6 格，第二行从第 1 格开始交错。通过 `legacy_pattern: 0` 适配这块板。若换成 OpenCV 4.5.4 默认棋盘，在板配置中设为 `1`。
 
-## 输入与输出
+## 坐标系
 
-| 方向 | 话题 | 消息类型 |
-| --- | --- | --- |
-| 订阅图像 | `/camera/front/capture` | `sensor_msgs/msg/Image` |
-| 订阅标定 | `/camera/front/camera_info` | `sensor_msgs/msg/CameraInfo` |
-| 发布有效位姿 | `/recognition/board_pose` | `geometry_msgs/msg/PoseStamped` |
-| 发布调试图 | `/recognition/debug_image` | `sensor_msgs/msg/Image` |
+原点位于板中心。以 ID 0–2 在上方、标记正面朝向观察者为准，红色 +X 沿板面向右，绿色 +Y 沿板面向上，蓝色 +Z 垂直板面朝向观察者。板坐标系为右手系。
 
-图像编码为 `bgr8`。图像和标定用 Sensor Data QoS 订阅。位姿沿用对应图像的时间戳，仅在本帧解算成功时发布。每帧发布识别状态，解算失败时将 `pose_valid` 设为 `false`。调试窗口可以关闭，图像话题继续输出。
+输出位姿表示板坐标系到 `camera_frame` 光学坐标系的变换。相机 +X 向右、+Y 向下、+Z 向前，调试图的 XYZ 数值是板中心在相机坐标系中的位置，单位为米。
 
-## 提供的文件
+## 编译与启动
 
-| 路径 | 内容 |
-| --- | --- |
-| `src/camera_frame/` | 视频回放节点及 launch，按帧发布图像与 `CameraInfo` |
-| `config/board.yaml` | `DICT_4X4_50`，6 × 6 方格，格长 150 mm，标记边长 120 mm，ID 为 0–17 |
-| `config/DA3113952.yaml` | 海康相机 DA3113952 的 1440 × 1080 标定 |
-| `src/interfaces/msg/BoardObservation.msg` | 识别状态消息定义 |
-| `media/` | 测试视频和图片待发布。视频由验收相机录制，使用配套标定 |
-
-## 编译与回放
-
-将作业仓库 clone 到本地，在 `develop` 分支开发，完成后 push 到自己的 GitHub 仓库。Fork 可选。[作业仓库](https://github.com/MixinSyde/HEU-apriltag)
-
-识别使用带 `aruco` 模块的 OpenCV。若需补齐回放与接口包的依赖，在构建前运行 `rosdep install --from-paths src --ignore-src --rosdistro humble -r -y`。
-
-下面的命令编译提供的回放节点和消息包。添加自己的识别包后，同一条 `colcon build` 命令也会编译它。
+在 WSL Ubuntu 22.04 中进入仓库根目录。构建需要 ROS 2 Humble、colcon 和包含 ArUco 模块的 OpenCV 4.5.4。
 
 ```bash
-git switch -c develop
 source /opt/ros/humble/setup.bash
+rosdep install --from-paths src --ignore-src --rosdistro humble -r -y
 colcon build
 source install/setup.bash
 ```
 
-回放节点把视频和配套标定发布成 ROS2 话题，供识别节点订阅。素材补发后，在仓库根目录运行下列命令，将 `test.mp4` 换成实际文件名。
+使用发放的 AVI 回放时，在当前电脑上运行以下命令。换机器时修改 `video_path`。launch 默认加载配套的 DA3113952 标定。
 
 ```bash
-ros2 launch camera_frame source.launch.py source:=video \
-  video_path:="$PWD/media/test.mp4" \
-  camera_info_url:="file://$PWD/config/DA3113952.yaml"
+ros2 launch board_recognition recognition.launch.py source:=video \
+  video_path:="/mnt/d/big homework/test_media/Video_20261122192405053.avi" \
+  loop:=false
 ```
 
-在自己的 launch 中提供 `source:=video` 和 `source:=live`。视频模式启动回放和识别节点，实车模式直接订阅车端相机话题。两种模式共用一份识别代码。
+现场接入发布原始图像及对应内参的海康相机节点后，使用 live 模式。
 
-## 提交
+```bash
+ros2 launch board_recognition recognition.launch.py source:=live
+```
 
-按功能分次提交 commit，保留源码、构建文件、launch 和配置。完成后用 Markdown 报告替换 `README.md`，写清实现思路、板坐标轴方向、编译与启动方法和测试结果。将 `develop` 合并到 `main`，push 到自己的仓库，把仓库链接交给学长验收。
+可传 `show_window:=true` 开启 OpenCV 预览，按 Esc 或 Q 关闭，调试图话题会继续发布。可用 `board_config:=/绝对路径/board.yaml` 替换板配置。回放其他相机素材时，通过 `camera_info_url:=file:///绝对路径/标定.yaml` 指定视频对应的标定。现场模式从相机话题读标定，使用全幅针孔模型，支持 `plumb_bob` 和 `rational_polynomial`。
 
-现场验收用 Foxglove 查看调试图和位姿。自行配置 Foxglove 三维展示或实现组件化通信可作为附加项。
+| 方向 | 话题 | 消息 |
+| --- | --- | --- |
+| 订阅 | `/camera/front/capture` | `sensor_msgs/msg/Image` |
+| 订阅 | `/camera/front/camera_info` | `sensor_msgs/msg/CameraInfo` |
+| 发布 | `/recognition/board_pose` | `geometry_msgs/msg/PoseStamped` |
+| 发布 | `/recognition/debug_image` | `sensor_msgs/msg/Image`（`bgr8`） |
+| 发布 | `/recognition/board_observation` | `interfaces/msg/BoardObservation` |
+
+输入订阅和调试图使用 Sensor Data QoS。每个收到的图像发布一条识别状态，成功帧才发布位姿。Foxglove 可通过 Image 面板查看 `/recognition/debug_image`，并在 3D 面板中选用 `camera_frame` 为固定坐标系、订阅 `/recognition/board_pose`。
+
+## 测试结果
+
+在 WSL Ubuntu 22.04、ROS 2 Humble、OpenCV 4.5.4 下，`camera_frame`、`interfaces` 和 `board_recognition` 三个包均通过构建。
+
+以发放的 DA3113952 标定运行 C++ 识别算法，三张 BMP 的结果如下。
+
+| 图片 | 检出标记数 | 板中心 XYZ（m） |
+| --- | ---: | --- |
+| `Image_20261122192618491.bmp` | 16 | (-0.143, -0.066, 3.517) |
+| `Image_20261122192626869.bmp` | 12 | (0.091, 0.014, 3.472) |
+| `Image_20261122192652741.bmp` | 10 | (-0.016, 0.196, 4.611) |
+
+对 `Video_20261122192405053.avi` 逐帧离线处理，1,944 帧均检出标记，1,918 帧通过位姿检查（98.66%）。有效帧的 Z 范围为 3.572–3.725 m。该比例表示解算通过率，位姿绝对误差需要用带真值的测试测量。
+
+ROS 2 视频模式以源文件约 98.95 FPS 回放，测试订阅端在一次运行中收到 642 条逐帧识别状态、630 条有效位姿和 602 张 `bgr8` 调试图，回放结束后收到输入超时状态。实时链路的接收数受 Sensor Data QoS、队列深度和处理速率影响，逐帧算法统计以离线结果为准。
+
+Live 模式通过独立启动的相机话题发布器验证。重复发送三张 BMP 并插入黑帧，确认缺标定时仍能检出 ID，黑帧时不发布新位姿且保留上次位姿的原始时间戳，重新见板后恢复发布，停止输入后报告超时。海康实机和 Foxglove 可视化留待现场验收。
