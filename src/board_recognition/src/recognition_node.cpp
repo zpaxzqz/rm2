@@ -246,6 +246,8 @@ private:
 
 int main(int argc, char **argv)
 {
+  // Limit internal OpenCV workers so they do not contend with ROS and video decoding.
+  cv::setNumThreads(2);
   rclcpp::init(argc, argv);
   try {
     rclcpp::spin(std::make_shared<board_recognition::RecognitionNode>());
