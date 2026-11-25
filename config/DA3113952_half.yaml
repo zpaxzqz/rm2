@@ -1,0 +1,27 @@
+image_width: 720
+image_height: 540
+camera_name: DA3113952
+camera_matrix:
+  rows: 3
+  cols: 3
+  data: [1292.164583,    0.     ,  356.826340,
+            0.     , 1290.578805,  293.164977,
+            0.     ,    0.     ,    1.     ]
+distortion_model: plumb_bob
+distortion_coefficients:
+  rows: 1
+  cols: 5
+  data: [-0.153922, 0.143529, 0.000294, 0.000414, 0.000000]
+rectification_matrix:
+  rows: 3
+  cols: 3
+  data: [1., 0., 0.,
+         0., 1., 0.,
+         0., 0., 1.]
+projection_matrix:
+  rows: 3
+  cols: 4
+  data: [1276.587525,    0.     , 356.640498,    0.     ,
+            0.     , 1280.731079, 293.237362,    0.     ,
+            0.     ,    0.     ,    1.     ,    0.     ]
+## DA3113952 scaled by 0.5 for the 720x540 / 15 fps replay copy
